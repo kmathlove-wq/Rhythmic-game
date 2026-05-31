@@ -144,24 +144,56 @@ body {
 .note {
   position: absolute;
   left: 50%;
-  top: -56px;
-  width: min(82px, 72%);
-  height: 26px;
+  top: -72px;
+  z-index: 3;
+  width: min(92px, 78%);
+  height: 58px;
+  display: grid;
+  place-items: center;
   transform: translateX(-50%);
-  border-radius: 6px;
-  background: linear-gradient(180deg, #53d8fb, #2a9df4);
-  border: 2px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 10px 26px rgba(42, 157, 244, 0.36);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent 36%),
+    linear-gradient(180deg, #53d8fb, #2a9df4);
+  border: 3px solid rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 7px 0 #1569a7,
+    0 18px 30px rgba(42, 157, 244, 0.36);
+  color: #08131b;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.note::after {
+  content: attr(data-key);
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  color: rgba(8, 19, 27, 0.34);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .note.hit {
-  background: #74d680;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), transparent 36%),
+    linear-gradient(180deg, #a6efae, #45c75a);
   border-color: #eaffec;
+  box-shadow:
+    0 7px 0 #26873a,
+    0 0 28px rgba(116, 214, 128, 0.8);
 }
 
 .note.missed {
-  background: #e85d75;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.64), transparent 36%),
+    linear-gradient(180deg, #ff8a9b, #e85d75);
   border-color: #ffd7de;
+  box-shadow:
+    0 7px 0 #9e2e44,
+    0 0 24px rgba(232, 93, 117, 0.7);
 }
 
 .controls {
@@ -218,6 +250,12 @@ button:active {
     width: 44px;
     height: 44px;
     font-size: 20px;
+  }
+
+  .note {
+    width: min(68px, 82%);
+    height: 50px;
+    font-size: 24px;
   }
 
   button {

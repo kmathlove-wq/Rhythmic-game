@@ -1,5 +1,6 @@
 const keys = ["a", "s", "d", "f"];
 const hitLineOffset = 72;
+const noteHeight = 58;
 const songLengthMs = 32000;
 
 const stage = document.querySelector(".stage");
@@ -158,6 +159,8 @@ function buildNotes() {
     const lane = document.querySelector(`.lane[data-key="${key}"]`);
     const element = document.createElement("div");
     element.className = "note";
+    element.dataset.key = key;
+    element.textContent = key.toUpperCase();
     lane.appendChild(element);
 
     return {
@@ -225,7 +228,8 @@ function update(now) {
     }
 
     const progress = (elapsed - (note.time - difficulty.noteTravelMs)) / difficulty.noteTravelMs;
-    const y = progress * hitY;
+    const currentNoteHeight = note.element.offsetHeight || noteHeight;
+    const y = progress * hitY - currentNoteHeight / 2;
     note.element.style.top = `${y}px`;
 
     if (!note.missed && elapsed - note.time > difficulty.missWindow) {
