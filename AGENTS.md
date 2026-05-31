@@ -13,6 +13,7 @@ Rhythmic-game/
 ├── index.html
 ├── main.js
 ├── sytle.css
+├── rhythm-badge.svg
 └── a_minecraft_movie_07. Steves Lava Chicken.mp3
 ```
 
@@ -28,6 +29,7 @@ Rhythmic-game/
 - `index.html`: HUD, 난이도 radio, 4개 레인, 시작/다시 시작 버튼, MP3 audio 요소
 - `main.js`: 차트, 난이도, 노트 생성/이동, 입력 판정, 점수/콤보, 음악 제어
 - `sytle.css`: 전체 레이아웃, HUD, 난이도 버튼, 레인, 노트, 모바일 반응형
+- `rhythm-badge.svg`: 브라우저 탭에 표시되는 직접 제작 SVG 파비콘
 
 ## main.js 주요 동작
 

@@ -13,6 +13,7 @@ Rhythmic-game/
 ├── index.html                                      # 한국어 HUD, 난이도 선택, 레인 DOM, audio 태그
 ├── main.js                                         # 게임 로직 전체
 ├── sytle.css                                       # 화면 레이아웃, 레인, 노트, 반응형 스타일
+├── rhythm-badge.svg                                # 직접 제작한 브라우저 탭 파비콘
 └── a_minecraft_movie_07. Steves Lava Chicken.mp3   # 게임 시작 시 재생되는 배경음악
 ```
 
