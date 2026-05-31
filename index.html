@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ASDF 리듬게임</title>
+  <link rel="stylesheet" href="sytle.css">
+</head>
+<body>
+  <main class="game-shell">
+    <section class="hud" aria-label="게임 상태">
+      <div>
+        <span class="label">점수</span>
+        <strong id="score">0</strong>
+      </div>
+      <div>
+        <span class="label">콤보</span>
+        <strong id="combo">0</strong>
+      </div>
+      <div>
+        <span class="label">판정</span>
+        <strong id="judgement">준비</strong>
+      </div>
+    </section>
+
+    <section class="difficulty" aria-label="난이도 선택">
+      <label>
+        <input type="radio" name="difficulty" value="easy">
+        <span>쉬움</span>
+      </label>
+      <label>
+        <input type="radio" name="difficulty" value="normal" checked>
+        <span>보통</span>
+      </label>
+      <label>
+        <input type="radio" name="difficulty" value="hard">
+        <span>어려움</span>
+      </label>
+    </section>
+
+    <section class="stage" aria-label="리듬 레인">
+      <div class="hit-line"></div>
+      <div class="lane" data-key="a"><span>A</span></div>
+      <div class="lane" data-key="s"><span>S</span></div>
+      <div class="lane" data-key="d"><span>D</span></div>
+      <div class="lane" data-key="f"><span>F</span></div>
+    </section>
+
+    <section class="controls">
+      <button id="startButton" type="button">시작</button>
+      <button id="restartButton" type="button">다시 시작</button>
+    </section>
+  </main>
+
+  <audio
+    id="song"
+    src="a_minecraft_movie_07. Steves Lava Chicken.mp3"
+    preload="auto"
+  ></audio>
+
+  <script src="main.js"></script>
+</body>
+</html>
