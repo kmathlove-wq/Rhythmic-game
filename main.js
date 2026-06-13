@@ -36,8 +36,9 @@ const difficulties = {
     goodWindow: 160,
     missWindow: 220,
     noteStep: 2,
-    analysisMinGap: 170,
-    analysisLimit: 240,
+    analysisMinGap: 300,
+    analysisLimit: 120,
+    pitchConfidence: 0.2,
     label: "쉬움"
   },
   normal: {
@@ -46,8 +47,9 @@ const difficulties = {
     goodWindow: 125,
     missWindow: 175,
     noteStep: 1,
-    analysisMinGap: 105,
-    analysisLimit: 420,
+    analysisMinGap: 220,
+    analysisLimit: 190,
+    pitchConfidence: 0.18,
     label: "보통"
   },
   hard: {
@@ -56,8 +58,9 @@ const difficulties = {
     goodWindow: 95,
     missWindow: 135,
     noteStep: 1,
-    analysisMinGap: 72,
-    analysisLimit: 620,
+    analysisMinGap: 160,
+    analysisLimit: 280,
+    pitchConfidence: 0.16,
     label: "어려움"
   }
 };
@@ -432,30 +435,47 @@ function getRms(samples, start, size) {
 }
 
 function estimatePitch(samples, start, size, sampleRate) {
-  let crossings = 0;
-  let previous = samples[start] || 0;
-  let peak = 0;
+  const candidates = pianoKeys.flatMap((item) => {
+    const frequencies = [];
 
-  for (let index = 0; index < size; index += 4) {
-    peak = Math.max(peak, Math.abs(samples[start + index] || 0));
-  }
+    for (let factor = 0.25; factor <= 4; factor *= 2) {
+      const frequency = item.frequency * factor;
 
-  const gate = Math.max(peak * 0.18, 0.006);
-
-  for (let index = 4; index < size; index += 4) {
-    const current = samples[start + index] || 0;
-
-    if (Math.abs(previous) > gate && Math.abs(current) > gate && previous <= 0 && current > 0) {
-      crossings += 1;
+      if (frequency >= 55 && frequency <= 1400) {
+        frequencies.push({ frequency, key: item.key });
+      }
     }
 
-    previous = current;
-  }
+    return frequencies;
+  });
+  let best = { frequency: 0, key: "", confidence: 0 };
 
-  const duration = size / sampleRate;
-  const frequency = crossings / duration;
+  candidates.forEach((candidate) => {
+    const lag = Math.round(sampleRate / candidate.frequency);
+    let correlation = 0;
+    let energyA = 0;
+    let energyB = 0;
 
-  return frequency >= 55 && frequency <= 1400 ? frequency : 0;
+    for (let index = 0; index < size - lag; index += 6) {
+      const a = samples[start + index] || 0;
+      const b = samples[start + index + lag] || 0;
+      correlation += a * b;
+      energyA += a * a;
+      energyB += b * b;
+    }
+
+    const confidence = correlation / Math.sqrt((energyA || 1) * (energyB || 1));
+
+    if (confidence > best.confidence) {
+      best = {
+        frequency: candidate.frequency,
+        key: candidate.key,
+        confidence
+      };
+    }
+  });
+
+  return best;
 }
 
 function normalizeToPianoRange(frequency) {
@@ -474,11 +494,11 @@ function normalizeToPianoRange(frequency) {
   return normalized;
 }
 
-function mapFrequencyToPianoKey(frequency, fallbackIndex, energyRank = fallbackIndex) {
+function mapFrequencyToPianoKey(frequency) {
   const normalized = normalizeToPianoRange(frequency);
 
   if (!normalized) {
-    return pianoKeys[(fallbackIndex + energyRank) % pianoKeys.length].key;
+    return "";
   }
 
   return pianoKeys
@@ -494,7 +514,8 @@ function getAnalysisOptions() {
 
   return {
     minGap: difficulty.analysisMinGap,
-    limit: difficulty.analysisLimit
+    limit: difficulty.analysisLimit,
+    pitchConfidence: difficulty.pitchConfidence
   };
 }
 
@@ -506,7 +527,7 @@ function waitForBrowserFrame() {
 
 async function buildGeneratedPianoChart(audioBuffer) {
   const { samples, sampleRate } = getAnalysisAudioData(audioBuffer);
-  const { minGap, limit } = getAnalysisOptions();
+  const { minGap, limit, pitchConfidence } = getAnalysisOptions();
   const hopSize = Math.floor(sampleRate * 0.045);
   const frameSize = Math.floor(sampleRate * 0.055);
   const energies = [];
@@ -538,7 +559,6 @@ async function buildGeneratedPianoChart(audioBuffer) {
 
   const averageEnergy = energies.reduce((sum, frame) => sum + frame.rms, 0) / (energies.length || 1);
   const averageFlux = energies.reduce((sum, frame) => sum + frame.flux, 0) / (energies.length || 1);
-  const maxEnergy = energies.reduce((max, frame) => Math.max(max, frame.rms + frame.flux), 0) || 1;
   const energyThreshold = Math.max(averageEnergy * 0.78, 0.006);
   const fluxThreshold = Math.max(averageFlux * 1.28, 0.0018);
   const candidates = [];
@@ -556,13 +576,17 @@ async function buildGeneratedPianoChart(audioBuffer) {
       continue;
     }
 
-    const pitch = estimatePitch(samples, current.start, Math.min(frameSize, samples.length - current.start), sampleRate);
-    const energyRank = Math.floor((current.rms + current.flux) / maxEnergy * pianoKeys.length);
-    const key = mapFrequencyToPianoKey(pitch, candidates.length, energyRank);
+    const pitch = estimatePitch(samples, current.start, Math.min(frameSize * 2, samples.length - current.start), sampleRate);
+    const key = pitch.key || mapFrequencyToPianoKey(pitch.frequency);
+
+    if (!key || pitch.confidence < pitchConfidence) {
+      continue;
+    }
+
     candidates.push({
       time: Math.max(450, Math.round(current.time)),
       key,
-      score: current.rms + current.flux * 2
+      score: current.rms + current.flux * 2 + pitch.confidence
     });
     lastTime = current.time;
 
@@ -589,7 +613,7 @@ async function buildGeneratedPianoChart(audioBuffer) {
 
 function selectChartAcrossSong(candidates, limit, durationMs) {
   if (candidates.length <= limit) {
-    return candidates.map((candidate) => [candidate.time, candidate.key]);
+    return smoothGeneratedChart(candidates.map((candidate) => [candidate.time, candidate.key]));
   }
 
   const bucketCount = Math.min(limit, Math.max(1, Math.ceil(durationMs / 950)));
@@ -617,9 +641,29 @@ function selectChartAcrossSong(candidates, limit, durationMs) {
       .forEach((candidate) => selected.push(candidate));
   });
 
-  return selected
+  return smoothGeneratedChart(selected
     .sort((a, b) => a.time - b.time)
-    .map((candidate) => [candidate.time, candidate.key]);
+    .map((candidate) => [candidate.time, candidate.key]));
+}
+
+function smoothGeneratedChart(chart) {
+  const smoothed = [];
+
+  chart.forEach(([time, key]) => {
+    const previous = smoothed[smoothed.length - 1];
+
+    if (previous && previous[1] === key && time - previous[0] < 260) {
+      return;
+    }
+
+    if (previous && Math.abs(pianoKeys.findIndex((item) => item.key === key) - pianoKeys.findIndex((item) => item.key === previous[1])) > 5 && time - previous[0] < 220) {
+      return;
+    }
+
+    smoothed.push([time, key]);
+  });
+
+  return smoothed;
 }
 
 async function analyzeUploadedSong(file) {
