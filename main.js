@@ -35,6 +35,8 @@ const difficulties = {
     goodWindow: 160,
     missWindow: 220,
     noteStep: 2,
+    analysisMinGap: 170,
+    analysisLimit: 360,
     label: "쉬움"
   },
   normal: {
@@ -43,6 +45,8 @@ const difficulties = {
     goodWindow: 125,
     missWindow: 175,
     noteStep: 1,
+    analysisMinGap: 105,
+    analysisLimit: 680,
     label: "보통"
   },
   hard: {
@@ -51,6 +55,8 @@ const difficulties = {
     goodWindow: 95,
     missWindow: 135,
     noteStep: 1,
+    analysisMinGap: 72,
+    analysisLimit: 980,
     label: "어려움"
   }
 };
@@ -398,19 +404,19 @@ function getRms(samples, start, size) {
 }
 
 function estimatePitch(samples, start, size, sampleRate) {
-  const minFrequency = 80;
-  const maxFrequency = 760;
+  const minFrequency = 55;
+  const maxFrequency = 1400;
   const minLag = Math.floor(sampleRate / maxFrequency);
   const maxLag = Math.floor(sampleRate / minFrequency);
   let bestLag = 0;
   let bestCorrelation = 0;
 
-  for (let lag = minLag; lag <= maxLag; lag += 1) {
+  for (let lag = minLag; lag <= maxLag; lag += 2) {
     let correlation = 0;
     let energyA = 0;
     let energyB = 0;
 
-    for (let index = 0; index < size - lag; index += 1) {
+    for (let index = 0; index < size - lag; index += 3) {
       const a = samples[start + index] || 0;
       const b = samples[start + index + lag] || 0;
       correlation += a * b;
@@ -426,7 +432,7 @@ function estimatePitch(samples, start, size, sampleRate) {
     }
   }
 
-  return bestCorrelation > 0.42 ? sampleRate / bestLag : 0;
+  return bestCorrelation > 0.34 ? sampleRate / bestLag : 0;
 }
 
 function normalizeToPianoRange(frequency) {
@@ -445,11 +451,11 @@ function normalizeToPianoRange(frequency) {
   return normalized;
 }
 
-function mapFrequencyToPianoKey(frequency, fallbackIndex) {
+function mapFrequencyToPianoKey(frequency, fallbackIndex, energyRank = fallbackIndex) {
   const normalized = normalizeToPianoRange(frequency);
 
   if (!normalized) {
-    return pianoKeys[fallbackIndex % pianoKeys.length].key;
+    return pianoKeys[(fallbackIndex + energyRank) % pianoKeys.length].key;
   }
 
   return pianoKeys
@@ -460,23 +466,43 @@ function mapFrequencyToPianoKey(frequency, fallbackIndex) {
     .sort((a, b) => a.distance - b.distance)[0].key;
 }
 
+function getAnalysisOptions() {
+  const difficulty = getDifficulty();
+
+  return {
+    minGap: difficulty.analysisMinGap,
+    limit: difficulty.analysisLimit
+  };
+}
+
 function buildGeneratedPianoChart(audioBuffer) {
   const samples = getMonoSamples(audioBuffer);
   const sampleRate = audioBuffer.sampleRate;
-  const hopSize = Math.floor(sampleRate * 0.085);
-  const frameSize = Math.floor(sampleRate * 0.07);
+  const { minGap, limit } = getAnalysisOptions();
+  const hopSize = Math.floor(sampleRate * 0.035);
+  const frameSize = Math.floor(sampleRate * 0.06);
   const energies = [];
 
   for (let start = 0; start + frameSize < samples.length; start += hopSize) {
+    const rms = getRms(samples, start, frameSize);
+
     energies.push({
       start,
       time: start / sampleRate * 1000,
-      rms: getRms(samples, start, frameSize)
+      rms,
+      flux: 0
     });
   }
 
+  for (let index = 1; index < energies.length; index += 1) {
+    energies[index].flux = Math.max(0, energies[index].rms - energies[index - 1].rms);
+  }
+
   const averageEnergy = energies.reduce((sum, frame) => sum + frame.rms, 0) / (energies.length || 1);
-  const threshold = Math.max(averageEnergy * 1.35, 0.012);
+  const averageFlux = energies.reduce((sum, frame) => sum + frame.flux, 0) / (energies.length || 1);
+  const maxEnergy = energies.reduce((max, frame) => Math.max(max, frame.rms + frame.flux), 0) || 1;
+  const energyThreshold = Math.max(averageEnergy * 0.78, 0.006);
+  const fluxThreshold = Math.max(averageFlux * 1.28, 0.0018);
   const chart = [];
   let lastTime = -Infinity;
 
@@ -484,28 +510,30 @@ function buildGeneratedPianoChart(audioBuffer) {
     const previous = energies[index - 1];
     const current = energies[index];
     const next = energies[index + 1];
-    const isPeak = current.rms > threshold && current.rms >= previous.rms && current.rms > next.rms;
-    const isNewHit = current.time - lastTime > 180;
+    const isEnergyPeak = current.rms > energyThreshold && current.rms >= previous.rms && current.rms > next.rms;
+    const isAttack = current.flux > fluxThreshold && current.flux >= previous.flux;
+    const isNewHit = current.time - lastTime > minGap;
 
-    if (!isPeak || !isNewHit) {
+    if ((!isEnergyPeak && !isAttack) || !isNewHit) {
       continue;
     }
 
     const pitch = estimatePitch(samples, current.start, Math.min(frameSize * 2, samples.length - current.start), sampleRate);
-    const key = mapFrequencyToPianoKey(pitch, chart.length);
+    const energyRank = Math.floor((current.rms + current.flux) / maxEnergy * pianoKeys.length);
+    const key = mapFrequencyToPianoKey(pitch, chart.length, energyRank);
     chart.push([Math.max(450, Math.round(current.time)), key]);
     lastTime = current.time;
 
-    if (chart.length >= 260) {
+    if (chart.length >= limit) {
       break;
     }
   }
 
-  if (chart.length >= 12) {
+  if (chart.length >= Math.min(36, Math.max(12, Math.floor(audioBuffer.duration * 1.2)))) {
     return chart;
   }
 
-  const fallbackCount = Math.min(96, Math.max(16, Math.floor(audioBuffer.duration * 2.5)));
+  const fallbackCount = Math.min(limit, Math.max(32, Math.floor(audioBuffer.duration * 4.5)));
   const fallbackStep = audioBuffer.duration * 1000 / fallbackCount;
 
   return Array.from({ length: fallbackCount }, (_, index) => [
