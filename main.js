@@ -37,7 +37,9 @@ const difficulties = {
     missWindow: 220,
     noteStep: 2,
     analysisMinGap: 300,
-    analysisLimit: 120,
+    analysisNotesPerSecond: 1.8,
+    analysisMinNotes: 36,
+    analysisMaxNotes: 220,
     pitchConfidence: 0.2,
     label: "쉬움"
   },
@@ -48,7 +50,9 @@ const difficulties = {
     missWindow: 175,
     noteStep: 1,
     analysisMinGap: 220,
-    analysisLimit: 190,
+    analysisNotesPerSecond: 2.9,
+    analysisMinNotes: 52,
+    analysisMaxNotes: 420,
     pitchConfidence: 0.18,
     label: "보통"
   },
@@ -59,7 +63,9 @@ const difficulties = {
     missWindow: 135,
     noteStep: 1,
     analysisMinGap: 160,
-    analysisLimit: 280,
+    analysisNotesPerSecond: 4.4,
+    analysisMinNotes: 72,
+    analysisMaxNotes: 760,
     pitchConfidence: 0.16,
     label: "어려움"
   }
@@ -514,7 +520,9 @@ function getAnalysisOptions() {
 
   return {
     minGap: difficulty.analysisMinGap,
-    limit: difficulty.analysisLimit,
+    notesPerSecond: difficulty.analysisNotesPerSecond,
+    minNotes: difficulty.analysisMinNotes,
+    maxNotes: difficulty.analysisMaxNotes,
     pitchConfidence: difficulty.pitchConfidence
   };
 }
@@ -535,7 +543,7 @@ function waitForBrowserFrame() {
 
 async function buildGeneratedPianoChart(audioBuffer) {
   const { samples, sampleRate } = getAnalysisAudioData(audioBuffer);
-  const { minGap, limit, pitchConfidence } = getAnalysisOptions();
+  const { minGap, notesPerSecond, minNotes, maxNotes, pitchConfidence } = getAnalysisOptions();
   const hopSize = Math.floor(sampleRate * 0.045);
   const frameSize = Math.floor(sampleRate * 0.055);
   const energies = [];
@@ -572,8 +580,9 @@ async function buildGeneratedPianoChart(audioBuffer) {
   const rawEvents = collectRawEvents(energies, energyThreshold, fluxThreshold, 90);
   const rawEventsPerSecond = rawEvents.length / Math.max(1, audioBuffer.duration);
   const complexity = clamp((rawEventsPerSecond - 2.2) / 5.2, 0, 1);
+  const baseLimit = clamp(Math.round(audioBuffer.duration * notesPerSecond), minNotes, maxNotes);
   const dynamicMinGap = Math.round(lerp(minGap, Math.max(80, minGap * 0.5), complexity));
-  const dynamicLimit = Math.round(lerp(limit * 0.65, limit * 1.65, complexity));
+  const dynamicLimit = Math.round(lerp(baseLimit * 0.65, baseLimit * 1.55, complexity));
   const dynamicPitchConfidence = lerp(pitchConfidence + 0.05, Math.max(0.1, pitchConfidence - 0.06), complexity);
   const candidates = [];
   let lastTime = -Infinity;
