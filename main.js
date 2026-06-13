@@ -519,6 +519,14 @@ function getAnalysisOptions() {
   };
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(start, end, amount) {
+  return start + (end - start) * amount;
+}
+
 function waitForBrowserFrame() {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 0);
@@ -561,6 +569,12 @@ async function buildGeneratedPianoChart(audioBuffer) {
   const averageFlux = energies.reduce((sum, frame) => sum + frame.flux, 0) / (energies.length || 1);
   const energyThreshold = Math.max(averageEnergy * 0.78, 0.006);
   const fluxThreshold = Math.max(averageFlux * 1.28, 0.0018);
+  const rawEvents = collectRawEvents(energies, energyThreshold, fluxThreshold, 90);
+  const rawEventsPerSecond = rawEvents.length / Math.max(1, audioBuffer.duration);
+  const complexity = clamp((rawEventsPerSecond - 2.2) / 5.2, 0, 1);
+  const dynamicMinGap = Math.round(lerp(minGap, Math.max(80, minGap * 0.5), complexity));
+  const dynamicLimit = Math.round(lerp(limit * 0.65, limit * 1.65, complexity));
+  const dynamicPitchConfidence = lerp(pitchConfidence + 0.05, Math.max(0.1, pitchConfidence - 0.06), complexity);
   const candidates = [];
   let lastTime = -Infinity;
 
@@ -570,7 +584,7 @@ async function buildGeneratedPianoChart(audioBuffer) {
     const next = energies[index + 1];
     const isEnergyPeak = current.rms > energyThreshold && current.rms >= previous.rms && current.rms > next.rms;
     const isAttack = current.flux > fluxThreshold && current.flux >= previous.flux;
-    const isNewHit = current.time - lastTime > minGap;
+    const isNewHit = current.time - lastTime > dynamicMinGap;
 
     if ((!isEnergyPeak && !isAttack) || !isNewHit) {
       continue;
@@ -579,7 +593,7 @@ async function buildGeneratedPianoChart(audioBuffer) {
     const pitch = estimatePitch(samples, current.start, Math.min(frameSize * 2, samples.length - current.start), sampleRate);
     const key = pitch.key || mapFrequencyToPianoKey(pitch.frequency);
 
-    if (!key || pitch.confidence < pitchConfidence) {
+    if (!key || pitch.confidence < dynamicPitchConfidence) {
       continue;
     }
 
@@ -596,24 +610,38 @@ async function buildGeneratedPianoChart(audioBuffer) {
     }
   }
 
-  const chart = selectChartAcrossSong(candidates, limit, audioBuffer.duration * 1000);
+  const chart = selectChartAcrossSong(candidates, dynamicLimit, audioBuffer.duration * 1000, complexity);
 
-  if (chart.length >= Math.min(36, Math.max(12, Math.floor(audioBuffer.duration * 1.2)))) {
+  if (chart.length > 0) {
     return chart;
   }
 
-  const fallbackCount = Math.min(limit, Math.max(32, Math.floor(audioBuffer.duration * 4.5)));
-  const fallbackStep = audioBuffer.duration * 1000 / fallbackCount;
-
-  return Array.from({ length: fallbackCount }, (_, index) => [
-    Math.round(700 + index * fallbackStep),
-    pianoKeys[index % pianoKeys.length].key
-  ]);
+  return [];
 }
 
-function selectChartAcrossSong(candidates, limit, durationMs) {
+function collectRawEvents(energies, energyThreshold, fluxThreshold, minGap) {
+  const events = [];
+  let lastTime = -Infinity;
+
+  for (let index = 1; index < energies.length - 1; index += 1) {
+    const previous = energies[index - 1];
+    const current = energies[index];
+    const next = energies[index + 1];
+    const isEnergyPeak = current.rms > energyThreshold && current.rms >= previous.rms && current.rms > next.rms;
+    const isAttack = current.flux > fluxThreshold && current.flux >= previous.flux;
+
+    if ((isEnergyPeak || isAttack) && current.time - lastTime > minGap) {
+      events.push(current);
+      lastTime = current.time;
+    }
+  }
+
+  return events;
+}
+
+function selectChartAcrossSong(candidates, limit, durationMs, complexity) {
   if (candidates.length <= limit) {
-    return smoothGeneratedChart(candidates.map((candidate) => [candidate.time, candidate.key]));
+    return smoothGeneratedChart(candidates.map((candidate) => [candidate.time, candidate.key]), complexity);
   }
 
   const bucketCount = Math.min(limit, Math.max(1, Math.ceil(durationMs / 950)));
@@ -643,20 +671,22 @@ function selectChartAcrossSong(candidates, limit, durationMs) {
 
   return smoothGeneratedChart(selected
     .sort((a, b) => a.time - b.time)
-    .map((candidate) => [candidate.time, candidate.key]));
+    .map((candidate) => [candidate.time, candidate.key]), complexity);
 }
 
-function smoothGeneratedChart(chart) {
+function smoothGeneratedChart(chart, complexity) {
   const smoothed = [];
+  const repeatGap = lerp(520, 220, complexity);
+  const jumpGap = lerp(420, 180, complexity);
 
   chart.forEach(([time, key]) => {
     const previous = smoothed[smoothed.length - 1];
 
-    if (previous && previous[1] === key && time - previous[0] < 260) {
+    if (previous && previous[1] === key && time - previous[0] < repeatGap) {
       return;
     }
 
-    if (previous && Math.abs(pianoKeys.findIndex((item) => item.key === key) - pianoKeys.findIndex((item) => item.key === previous[1])) > 5 && time - previous[0] < 220) {
+    if (previous && Math.abs(pianoKeys.findIndex((item) => item.key === key) - pianoKeys.findIndex((item) => item.key === previous[1])) > 5 && time - previous[0] < jumpGap) {
       return;
     }
 
