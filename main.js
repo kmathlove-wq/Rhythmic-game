@@ -10,7 +10,10 @@ const startButton = document.querySelector("#startButton");
 const restartButton = document.querySelector("#restartButton");
 const difficultyInputs = [...document.querySelectorAll('input[name="difficulty"]')];
 const modeInputs = [...document.querySelectorAll('input[name="gameMode"]')];
+const songUpload = document.querySelector("#songUpload");
+const analysisStatus = document.querySelector("#analysisStatus");
 const song = document.querySelector("#song");
+const defaultSongSource = song.getAttribute("src");
 
 let audioContext;
 let startTime = 0;
@@ -21,6 +24,9 @@ let combo = 0;
 let notes = [];
 let activeDifficulty = null;
 let activeModeKey = "classic";
+let uploadedSongUrl = "";
+let uploadedPianoChart = [];
+let uploadedSongName = "";
 
 const difficulties = {
   easy: {
@@ -169,9 +175,12 @@ function getKeyConfig(key, mode = getMode()) {
 
 function getChart(mode = getMode(), difficultyKey = getDifficultyKey()) {
   const difficulty = difficulties[difficultyKey];
+  const customPianoChart = mode.pianoInput && uploadedPianoChart.length > 0;
+  const baseChart = customPianoChart ? uploadedPianoChart : mode.baseChart;
+  const hardExtraChart = customPianoChart ? [] : mode.hardExtraChart;
   const chart = difficultyKey === "hard"
-    ? [...mode.baseChart, ...mode.hardExtraChart].sort((a, b) => a[0] - b[0])
-    : mode.baseChart;
+    ? [...baseChart, ...hardExtraChart].sort((a, b) => a[0] - b[0])
+    : baseChart;
 
   return chart.filter((_, index) => index % difficulty.noteStep === 0);
 }
@@ -273,6 +282,10 @@ function updateScore(points) {
   comboEl.textContent = combo;
 }
 
+function setAnalysisStatus(text) {
+  analysisStatus.textContent = text;
+}
+
 function renderLanes(modeKey = getModeKey()) {
   const mode = getMode(modeKey);
 
@@ -340,6 +353,7 @@ async function startGame() {
   await getAudioContext().resume();
   activeDifficulty = getDifficulty();
   activeModeKey = getModeKey();
+  song.src = activeModeKey === "piano" && uploadedSongUrl ? uploadedSongUrl : defaultSongSource;
   renderLanes(activeModeKey);
   buildNotes();
 
@@ -355,6 +369,189 @@ async function startGame() {
   setJudgement("GO");
 
   animationId = requestAnimationFrame(update);
+}
+
+function getMonoSamples(audioBuffer) {
+  const length = audioBuffer.length;
+  const mono = new Float32Array(length);
+
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+    const data = audioBuffer.getChannelData(channel);
+
+    for (let index = 0; index < length; index += 1) {
+      mono[index] += data[index] / audioBuffer.numberOfChannels;
+    }
+  }
+
+  return mono;
+}
+
+function getRms(samples, start, size) {
+  let sum = 0;
+
+  for (let index = 0; index < size; index += 1) {
+    const sample = samples[start + index] || 0;
+    sum += sample * sample;
+  }
+
+  return Math.sqrt(sum / size);
+}
+
+function estimatePitch(samples, start, size, sampleRate) {
+  const minFrequency = 80;
+  const maxFrequency = 760;
+  const minLag = Math.floor(sampleRate / maxFrequency);
+  const maxLag = Math.floor(sampleRate / minFrequency);
+  let bestLag = 0;
+  let bestCorrelation = 0;
+
+  for (let lag = minLag; lag <= maxLag; lag += 1) {
+    let correlation = 0;
+    let energyA = 0;
+    let energyB = 0;
+
+    for (let index = 0; index < size - lag; index += 1) {
+      const a = samples[start + index] || 0;
+      const b = samples[start + index + lag] || 0;
+      correlation += a * b;
+      energyA += a * a;
+      energyB += b * b;
+    }
+
+    const normalized = correlation / Math.sqrt((energyA || 1) * (energyB || 1));
+
+    if (normalized > bestCorrelation) {
+      bestCorrelation = normalized;
+      bestLag = lag;
+    }
+  }
+
+  return bestCorrelation > 0.42 ? sampleRate / bestLag : 0;
+}
+
+function normalizeToPianoRange(frequency) {
+  let normalized = frequency;
+  const low = pianoKeys[0].frequency;
+  const high = pianoKeys[pianoKeys.length - 1].frequency;
+
+  while (normalized && normalized < low) {
+    normalized *= 2;
+  }
+
+  while (normalized > high) {
+    normalized /= 2;
+  }
+
+  return normalized;
+}
+
+function mapFrequencyToPianoKey(frequency, fallbackIndex) {
+  const normalized = normalizeToPianoRange(frequency);
+
+  if (!normalized) {
+    return pianoKeys[fallbackIndex % pianoKeys.length].key;
+  }
+
+  return pianoKeys
+    .map((item) => ({
+      key: item.key,
+      distance: Math.abs(Math.log2(normalized / item.frequency))
+    }))
+    .sort((a, b) => a.distance - b.distance)[0].key;
+}
+
+function buildGeneratedPianoChart(audioBuffer) {
+  const samples = getMonoSamples(audioBuffer);
+  const sampleRate = audioBuffer.sampleRate;
+  const hopSize = Math.floor(sampleRate * 0.085);
+  const frameSize = Math.floor(sampleRate * 0.07);
+  const energies = [];
+
+  for (let start = 0; start + frameSize < samples.length; start += hopSize) {
+    energies.push({
+      start,
+      time: start / sampleRate * 1000,
+      rms: getRms(samples, start, frameSize)
+    });
+  }
+
+  const averageEnergy = energies.reduce((sum, frame) => sum + frame.rms, 0) / (energies.length || 1);
+  const threshold = Math.max(averageEnergy * 1.35, 0.012);
+  const chart = [];
+  let lastTime = -Infinity;
+
+  for (let index = 1; index < energies.length - 1; index += 1) {
+    const previous = energies[index - 1];
+    const current = energies[index];
+    const next = energies[index + 1];
+    const isPeak = current.rms > threshold && current.rms >= previous.rms && current.rms > next.rms;
+    const isNewHit = current.time - lastTime > 180;
+
+    if (!isPeak || !isNewHit) {
+      continue;
+    }
+
+    const pitch = estimatePitch(samples, current.start, Math.min(frameSize * 2, samples.length - current.start), sampleRate);
+    const key = mapFrequencyToPianoKey(pitch, chart.length);
+    chart.push([Math.max(450, Math.round(current.time)), key]);
+    lastTime = current.time;
+
+    if (chart.length >= 260) {
+      break;
+    }
+  }
+
+  if (chart.length >= 12) {
+    return chart;
+  }
+
+  const fallbackCount = Math.min(96, Math.max(16, Math.floor(audioBuffer.duration * 2.5)));
+  const fallbackStep = audioBuffer.duration * 1000 / fallbackCount;
+
+  return Array.from({ length: fallbackCount }, (_, index) => [
+    Math.round(700 + index * fallbackStep),
+    pianoKeys[index % pianoKeys.length].key
+  ]);
+}
+
+async function analyzeUploadedSong(file) {
+  if (!file) {
+    return;
+  }
+
+  resetGame();
+  setAnalysisStatus("분석 중...");
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const context = getAudioContext();
+    const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+    uploadedPianoChart = buildGeneratedPianoChart(audioBuffer);
+    uploadedSongName = file.name;
+
+    if (uploadedSongUrl) {
+      URL.revokeObjectURL(uploadedSongUrl);
+    }
+
+    uploadedSongUrl = URL.createObjectURL(file);
+    song.src = uploadedSongUrl;
+
+    const pianoInput = modeInputs.find((input) => input.value === "piano");
+    pianoInput.checked = true;
+    renderLanes("piano");
+    setAnalysisStatus(`${uploadedSongName} 분석 완료: 노트 ${uploadedPianoChart.length}개`);
+  } catch (error) {
+    uploadedPianoChart = [];
+    uploadedSongName = "";
+
+    if (uploadedSongUrl) {
+      URL.revokeObjectURL(uploadedSongUrl);
+      uploadedSongUrl = "";
+    }
+
+    song.src = defaultSongSource;
+    setAnalysisStatus("분석 실패: 다른 음원 파일을 시도해 주세요");
+  }
 }
 
 function update(now) {
@@ -513,8 +710,13 @@ modeInputs.forEach((input) => {
   input.addEventListener("change", () => {
     if (!gameRunning) {
       renderLanes();
+      song.src = getModeKey() === "piano" && uploadedSongUrl ? uploadedSongUrl : defaultSongSource;
     }
   });
+});
+
+songUpload.addEventListener("change", () => {
+  analyzeUploadedSong(songUpload.files[0]);
 });
 
 renderLanes();
