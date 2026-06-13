@@ -1,16 +1,15 @@
-const keys = ["a", "s", "d", "f"];
 const hitLineOffset = 72;
 const noteHeight = 58;
 const songLengthMs = 32000;
 
 const stage = document.querySelector(".stage");
-const lanes = [...document.querySelectorAll(".lane")];
 const scoreEl = document.querySelector("#score");
 const comboEl = document.querySelector("#combo");
 const judgementEl = document.querySelector("#judgement");
 const startButton = document.querySelector("#startButton");
 const restartButton = document.querySelector("#restartButton");
 const difficultyInputs = [...document.querySelectorAll('input[name="difficulty"]')];
+const modeInputs = [...document.querySelectorAll('input[name="gameMode"]')];
 const song = document.querySelector("#song");
 
 let audioContext;
@@ -21,6 +20,7 @@ let score = 0;
 let combo = 0;
 let notes = [];
 let activeDifficulty = null;
+let activeModeKey = "classic";
 
 const difficulties = {
   easy: {
@@ -49,7 +49,25 @@ const difficulties = {
   }
 };
 
-const baseChart = [
+const classicKeys = [
+  { key: "a", label: "A", note: "A", frequency: 262 },
+  { key: "s", label: "S", note: "S", frequency: 330 },
+  { key: "d", label: "D", note: "D", frequency: 392 },
+  { key: "f", label: "F", note: "F", frequency: 523 }
+];
+
+const pianoKeys = [
+  { key: "a", label: "A", note: "도", frequency: 261.63 },
+  { key: "s", label: "S", note: "레", frequency: 293.66 },
+  { key: "d", label: "D", note: "미", frequency: 329.63 },
+  { key: "f", label: "F", note: "파", frequency: 349.23 },
+  { key: "j", label: "J", note: "솔", frequency: 392 },
+  { key: "k", label: "K", note: "라", frequency: 440 },
+  { key: "l", label: "L", note: "시", frequency: 493.88 },
+  { key: ";", label: ";", note: "높은 도", frequency: 523.25 }
+];
+
+const classicBaseChart = [
   [900, "a"], [1250, "s"], [1600, "d"], [1950, "f"],
   [2450, "a"], [2800, "d"], [3150, "s"], [3500, "f"],
   [4050, "a"], [4300, "s"], [4550, "d"], [4800, "f"],
@@ -70,7 +88,7 @@ const baseChart = [
   [28600, "a"], [28950, "s"], [29300, "d"], [29650, "f"]
 ];
 
-const hardExtraChart = [
+const classicHardExtraChart = [
   [1050, "f"], [1425, "d"], [1775, "s"],
   [4175, "d"], [4425, "a"], [4675, "f"],
   [7275, "s"], [7625, "a"], [7975, "f"],
@@ -81,6 +99,50 @@ const hardExtraChart = [
   [28775, "f"], [29125, "a"], [29475, "s"]
 ];
 
+const pianoBaseChart = [
+  [900, "a"], [1200, "s"], [1500, "d"], [1800, "f"], [2100, "j"], [2400, "k"], [2700, "l"], [3000, ";"],
+  [3450, ";"], [3750, "l"], [4050, "k"], [4350, "j"], [4650, "f"], [4950, "d"], [5250, "s"], [5550, "a"],
+  [6100, "a"], [6350, "d"], [6600, "j"], [6850, "d"], [7100, "s"], [7350, "f"], [7600, "k"], [7850, "f"],
+  [8400, "j"], [8650, "k"], [8900, "l"], [9150, ";"], [9400, "l"], [9650, "k"], [9900, "j"], [10150, "f"],
+  [10800, "a"], [11100, "s"], [11400, "d"], [11700, "j"], [12000, "f"], [12300, "d"], [12600, "s"], [12900, "a"],
+  [13450, "f"], [13700, "j"], [13950, "k"], [14200, "l"], [14450, "k"], [14700, "j"], [14950, "f"], [15200, "d"],
+  [15850, "a"], [16100, "s"], [16350, "d"], [16600, "f"], [16850, "j"], [17100, "k"], [17350, "l"], [17600, ";"],
+  [18150, ";"], [18400, "k"], [18650, "j"], [18900, "f"], [19150, "d"], [19400, "f"], [19650, "j"], [19900, "k"],
+  [20550, "a"], [20850, "d"], [21150, "f"], [21450, "j"], [21750, "k"], [22050, "j"], [22350, "f"], [22650, "d"],
+  [23300, "s"], [23550, "d"], [23800, "f"], [24050, "j"], [24300, "k"], [24550, "l"], [24800, ";"], [25050, "l"],
+  [25700, "j"], [26000, "f"], [26300, "d"], [26600, "s"], [26900, "a"], [27200, "d"], [27500, "f"], [27800, "j"],
+  [28600, "k"], [28900, "l"], [29200, ";"], [29650, ";"]
+];
+
+const pianoHardExtraChart = [
+  [1050, "j"], [1350, "k"], [1650, "l"],
+  [6225, "k"], [6725, ";"], [7225, "l"], [7725, "j"],
+  [8525, "d"], [9025, "f"], [9525, "d"],
+  [13575, "a"], [14075, "d"], [14575, ";"], [15075, "l"],
+  [15975, ";"], [16475, "l"], [16975, "j"], [17475, "f"],
+  [23425, "k"], [23925, ";"], [24425, "j"], [24925, "d"],
+  [28750, "f"], [29100, "k"], [29450, "l"]
+];
+
+const gameModes = {
+  classic: {
+    label: "ASDF 모드",
+    stageClass: "classic-mode",
+    keys: classicKeys,
+    baseChart: classicBaseChart,
+    hardExtraChart: classicHardExtraChart,
+    pianoInput: false
+  },
+  piano: {
+    label: "피아노 모드",
+    stageClass: "piano-mode",
+    keys: pianoKeys,
+    baseChart: pianoBaseChart,
+    hardExtraChart: pianoHardExtraChart,
+    pianoInput: true
+  }
+};
+
 function getDifficultyKey() {
   return difficultyInputs.find((input) => input.checked)?.value || "normal";
 }
@@ -89,15 +151,29 @@ function getDifficulty() {
   return difficulties[getDifficultyKey()];
 }
 
-function getChart() {
-  const difficultyKey = getDifficultyKey();
-  const difficulty = getDifficulty();
+function getModeKey() {
+  return modeInputs.find((input) => input.checked)?.value || "classic";
+}
 
-  if (difficultyKey === "hard") {
-    return [...baseChart, ...hardExtraChart].sort((a, b) => a[0] - b[0]);
-  }
+function getMode(modeKey = getModeKey()) {
+  return gameModes[modeKey] || gameModes.classic;
+}
 
-  return baseChart.filter((_, index) => index % difficulty.noteStep === 0);
+function getActiveMode() {
+  return getMode(activeModeKey);
+}
+
+function getKeyConfig(key, mode = getMode()) {
+  return mode.keys.find((item) => item.key === key);
+}
+
+function getChart(mode = getMode(), difficultyKey = getDifficultyKey()) {
+  const difficulty = difficulties[difficultyKey];
+  const chart = difficultyKey === "hard"
+    ? [...mode.baseChart, ...mode.hardExtraChart].sort((a, b) => a[0] - b[0])
+    : mode.baseChart;
+
+  return chart.filter((_, index) => index % difficulty.noteStep === 0);
 }
 
 function getAudioContext() {
@@ -125,8 +201,51 @@ function playTone(frequency, duration = 0.08, type = "sine", gainValue = 0.08) {
   oscillator.stop(now + duration);
 }
 
+function playPianoTone(key, accented = false) {
+  const mode = gameRunning ? getActiveMode() : getMode();
+  const keyConfig = getKeyConfig(key, mode);
+
+  if (!keyConfig) {
+    return;
+  }
+
+  const context = getAudioContext();
+  const now = context.currentTime;
+  const mainOscillator = context.createOscillator();
+  const overtone = context.createOscillator();
+  const gain = context.createGain();
+  const overtoneGain = context.createGain();
+  const peak = accented ? 0.16 : 0.11;
+
+  mainOscillator.type = "triangle";
+  overtone.type = "sine";
+  mainOscillator.frequency.setValueAtTime(keyConfig.frequency, now);
+  overtone.frequency.setValueAtTime(keyConfig.frequency * 2, now);
+  gain.gain.setValueAtTime(0.001, now);
+  gain.gain.exponentialRampToValueAtTime(peak, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+  overtoneGain.gain.setValueAtTime(peak * 0.32, now);
+  overtoneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+  mainOscillator.connect(gain);
+  overtone.connect(overtoneGain);
+  overtoneGain.connect(gain);
+  gain.connect(context.destination);
+  mainOscillator.start(now);
+  overtone.start(now);
+  mainOscillator.stop(now + 0.56);
+  overtone.stop(now + 0.26);
+}
+
 function playHitSound(key, judgement) {
-  const base = { a: 262, s: 330, d: 392, f: 523 }[key];
+  const mode = getActiveMode();
+
+  if (mode.pianoInput) {
+    playPianoTone(key, judgement === "PERFECT");
+    return;
+  }
+
+  const base = getKeyConfig(key, mode)?.frequency || 262;
   playTone(judgement === "PERFECT" ? base * 1.5 : base, 0.09, "triangle", 0.09);
 }
 
@@ -154,13 +273,37 @@ function updateScore(points) {
   comboEl.textContent = combo;
 }
 
+function renderLanes(modeKey = getModeKey()) {
+  const mode = getMode(modeKey);
+
+  clearNotes();
+  stage.querySelectorAll(".lane").forEach((lane) => lane.remove());
+  stage.classList.remove("classic-mode", "piano-mode");
+  stage.classList.add(mode.stageClass);
+  stage.style.setProperty("--lane-count", mode.keys.length);
+
+  mode.keys.forEach((item) => {
+    const lane = document.createElement("button");
+    lane.className = "lane";
+    lane.type = "button";
+    lane.dataset.key = item.key;
+    lane.setAttribute("aria-label", `${item.note} ${item.label} 키`);
+    lane.innerHTML = `<span>${item.label}</span><small>${item.note}</small>`;
+    stage.appendChild(lane);
+  });
+}
+
 function buildNotes() {
-  notes = getChart().map(([time, key]) => {
-    const lane = document.querySelector(`.lane[data-key="${key}"]`);
+  const mode = getActiveMode();
+
+  notes = getChart(mode).map(([time, key]) => {
+    const lane = [...document.querySelectorAll(".lane")].find((item) => item.dataset.key === key);
+    const keyConfig = getKeyConfig(key, mode);
     const element = document.createElement("div");
     element.className = "note";
-    element.dataset.key = key;
-    element.textContent = key.toUpperCase();
+    element.dataset.key = keyConfig.label;
+    element.dataset.note = keyConfig.note;
+    element.textContent = mode.pianoInput ? keyConfig.note : keyConfig.label;
     lane.appendChild(element);
 
     return {
@@ -196,6 +339,8 @@ async function startGame() {
   resetGame();
   await getAudioContext().resume();
   activeDifficulty = getDifficulty();
+  activeModeKey = getModeKey();
+  renderLanes(activeModeKey);
   buildNotes();
 
   try {
@@ -261,14 +406,34 @@ function finishGame() {
   setJudgement(`완료 ${score}`);
 }
 
+function pulseLane(lane) {
+  lane.classList.add("active");
+  window.setTimeout(() => lane.classList.remove("active"), 90);
+}
+
 function hitKey(key) {
-  if (!gameRunning || !keys.includes(key)) {
+  const mode = gameRunning ? getActiveMode() : getMode();
+
+  if (!mode.keys.some((item) => item.key === key)) {
     return;
   }
 
-  const lane = lanes.find((item) => item.dataset.key === key);
-  lane.classList.add("active");
-  window.setTimeout(() => lane.classList.remove("active"), 90);
+  if (!gameRunning && !mode.pianoInput) {
+    return;
+  }
+
+  const lane = [...document.querySelectorAll(".lane")].find((item) => item.dataset.key === key);
+
+  if (lane) {
+    pulseLane(lane);
+  }
+
+  if (!gameRunning) {
+    if (mode.pianoInput) {
+      playPianoTone(key, false);
+    }
+    return;
+  }
 
   const elapsed = performance.now() - startTime;
   const difficulty = activeDifficulty || getDifficulty();
@@ -281,7 +446,13 @@ function hitKey(key) {
     combo = 0;
     updateScore(0);
     setJudgement("MISS");
-    playMissSound();
+
+    if (mode.pianoInput) {
+      playPianoTone(key, false);
+    } else {
+      playMissSound();
+    }
+
     return;
   }
 
@@ -303,7 +474,12 @@ function hitKey(key) {
     combo = 0;
     updateScore(150);
     setJudgement("BAD");
-    playMissSound();
+
+    if (mode.pianoInput) {
+      playPianoTone(key, false);
+    } else {
+      playMissSound();
+    }
   }
 }
 
@@ -313,12 +489,35 @@ document.addEventListener("keydown", (event) => {
   }
 
   const key = event.key.toLowerCase();
-  if (keys.includes(key)) {
+  const mode = gameRunning ? getActiveMode() : getMode();
+
+  if (mode.keys.some((item) => item.key === key)) {
     event.preventDefault();
     hitKey(key);
   }
 });
 
+stage.addEventListener("pointerdown", async (event) => {
+  const lane = event.target.closest(".lane");
+
+  if (!lane) {
+    return;
+  }
+
+  event.preventDefault();
+  await getAudioContext().resume();
+  hitKey(lane.dataset.key);
+});
+
+modeInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    if (!gameRunning) {
+      renderLanes();
+    }
+  });
+});
+
+renderLanes();
 startButton.addEventListener("click", startGame);
 restartButton.addEventListener("click", startGame);
 song.addEventListener("ended", finishGame);

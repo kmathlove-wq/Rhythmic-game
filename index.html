@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ASDF 리듬게임</title>
+  <title>ASDF 피아노 리듬게임</title>
   <link rel="icon" type="image/svg+xml" href="rhythm-badge.svg">
   <link rel="stylesheet" href="sytle.css">
 </head>
@@ -39,12 +39,19 @@
       </label>
     </section>
 
-    <section class="stage" aria-label="리듬 레인">
+    <section class="mode-select" aria-label="게임 모드 선택">
+      <label>
+        <input type="radio" name="gameMode" value="classic" checked>
+        <span>ASDF 모드</span>
+      </label>
+      <label>
+        <input type="radio" name="gameMode" value="piano">
+        <span>피아노 모드</span>
+      </label>
+    </section>
+
+    <section class="stage" aria-label="피아노 리듬 레인">
       <div class="hit-line"></div>
-      <div class="lane" data-key="a"><span>A</span></div>
-      <div class="lane" data-key="s"><span>S</span></div>
-      <div class="lane" data-key="d"><span>D</span></div>
-      <div class="lane" data-key="f"><span>F</span></div>
     </section>
 
     <section class="controls">

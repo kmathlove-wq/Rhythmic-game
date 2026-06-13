@@ -1,9 +1,9 @@
-# ASDF 리듬게임 — AGENTS.md
+# ASDF 피아노 리듬게임 — AGENTS.md
 
 ## 프로젝트 요약
 
-브라우저에서 바로 실행되는 한국어 ASDF 리듬게임이다.
-노트가 내려오면 판정선에 맞춰 `A`, `S`, `D`, `F`를 누른다.
+브라우저에서 바로 실행되는 한국어 ASDF/피아노 리듬게임이다.
+ASDF 모드는 판정선에 맞춰 `A`, `S`, `D`, `F`를 누르고, 피아노 모드는 `A`, `S`, `D`, `F`, `J`, `K`, `L`, `;`로 음계를 연주한다.
 배경음악은 `a_minecraft_movie_07. Steves Lava Chicken.mp3`이고, 효과음은 Web Audio API로 생성한다.
 
 ## 저장소 구조
@@ -26,20 +26,23 @@ Rhythmic-game/
 
 ## 핵심 구현
 
-- `index.html`: HUD, 난이도 radio, 4개 레인, 시작/다시 시작 버튼, MP3 audio 요소
-- `main.js`: 차트, 난이도, 노트 생성/이동, 입력 판정, 점수/콤보, 음악 제어
-- `sytle.css`: 전체 레이아웃, HUD, 난이도 버튼, 레인, 내려오는 키캡 노트, 모바일 반응형
+- `index.html`: HUD, 난이도 radio, 모드 radio, 동적 레인 stage, 시작/다시 시작 버튼, MP3 audio 요소
+- `main.js`: 모드별 차트/키, 난이도, 노트 생성/이동, 입력 판정, 점수/콤보, 음악 제어
+- `sytle.css`: 전체 레이아웃, HUD, 난이도/모드 버튼, ASDF/피아노 레인, 내려오는 노트, 모바일 반응형
 - `rhythm-badge.svg`: 브라우저 탭에 표시되는 직접 제작 SVG 파비콘
 
 ## main.js 주요 동작
 
 | 항목 | 설명 |
 |---|---|
-| `baseChart` | 기본 노트 배열 |
-| `hardExtraChart` | 어려움 난이도 추가 노트 |
+| `gameModes` | ASDF/피아노 모드별 키, 차트, 레인 스타일 설정 |
+| `classicBaseChart`, `pianoBaseChart` | 모드별 기본 노트 배열 |
+| `classicHardExtraChart`, `pianoHardExtraChart` | 어려움 난이도 추가 노트 |
 | `difficulties` | 쉬움/보통/어려움의 속도와 판정폭 |
 | `activeDifficulty` | 게임 시작 시 선택 난이도를 고정 |
-| `buildNotes()` | 현재 난이도 차트로 DOM 노트 생성 |
+| `activeModeKey` | 게임 시작 시 선택 모드를 고정 |
+| `renderLanes()` | 선택 모드에 맞는 레인을 DOM에 생성 |
+| `buildNotes()` | 현재 모드/난이도 차트로 DOM 노트 생성 |
 | `update()` | `requestAnimationFrame`으로 노트 위치와 미스 판정 처리 |
 | `hitKey()` | 키 입력 시 가장 가까운 노트를 찾아 판정 |
 | `resetGame()` | 음악, 노트, 점수, 콤보, 판정 초기화 |
@@ -54,6 +57,12 @@ Rhythmic-game/
 플레이 도중 난이도 radio를 바꿔도 현재 게임에는 적용되지 않는다.
 새 게임 시작 시 `activeDifficulty`로 고정된다.
 
+## 모드 정책
+
+- ASDF 모드: 기존 4키 차트와 판정/효과음 흐름을 유지한다.
+- 피아노 모드: 8키 차트와 Web Audio 피아노 톤을 사용하며, 레인을 클릭/터치해도 해당 음이 재생된다.
+- 플레이 도중 모드 radio를 바꿔도 현재 게임에는 적용되지 않는다. 새 게임 시작 시 `activeModeKey`로 고정된다.
+
 ## DOM 연결
 
 ```text
@@ -63,9 +72,10 @@ Rhythmic-game/
 #startButton
 #restartButton
 input[name="difficulty"]
+input[name="gameMode"]
 #song
 .stage
-.lane[data-key="a|s|d|f"]
+.lane[data-key="a|s|d|f|j|k|l|;"]
 ```
 
 DOM id나 class를 바꾸면 `main.js`의 selector도 함께 수정해야 한다.
@@ -86,7 +96,8 @@ node --check main.js
 수동 확인:
 - 시작 버튼 클릭 후 음악 재생
 - 쉬움/보통/어려움 각각 노트 수와 속도 차이 확인
-- `A/S/D/F` 판정과 콤보 갱신 확인
+- ASDF 모드에서 `A/S/D/F` 판정과 콤보 갱신 확인
+- 피아노 모드에서 `A/S/D/F/J/K/L/;` 키보드 입력과 레인 클릭/터치 시 음 재생 확인
 - 다시 시작 시 음악이 처음부터 재생되는지 확인
 
 ## GitHub 작업
