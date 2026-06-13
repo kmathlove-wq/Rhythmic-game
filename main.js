@@ -1,6 +1,7 @@
 const hitLineOffset = 72;
 const noteHeight = 58;
 const songLengthMs = 32000;
+const noteSpawnAheadMs = 260;
 
 const stage = document.querySelector(".stage");
 const scoreEl = document.querySelector("#score");
@@ -36,7 +37,7 @@ const difficulties = {
     missWindow: 220,
     noteStep: 2,
     analysisMinGap: 170,
-    analysisLimit: 360,
+    analysisLimit: 240,
     label: "쉬움"
   },
   normal: {
@@ -46,7 +47,7 @@ const difficulties = {
     missWindow: 175,
     noteStep: 1,
     analysisMinGap: 105,
-    analysisLimit: 680,
+    analysisLimit: 420,
     label: "보통"
   },
   hard: {
@@ -56,7 +57,7 @@ const difficulties = {
     missWindow: 135,
     noteStep: 1,
     analysisMinGap: 72,
-    analysisLimit: 980,
+    analysisLimit: 620,
     label: "어려움"
   }
 };
@@ -316,20 +317,13 @@ function buildNotes() {
   const mode = getActiveMode();
 
   notes = getChart(mode).map(([time, key]) => {
-    const lane = [...document.querySelectorAll(".lane")].find((item) => item.dataset.key === key);
     const keyConfig = getKeyConfig(key, mode);
-    const element = document.createElement("div");
-    element.className = "note";
-    element.dataset.key = keyConfig.label;
-    element.dataset.note = keyConfig.note;
-    element.textContent = mode.pianoInput ? keyConfig.note : keyConfig.label;
-    lane.appendChild(element);
 
     return {
       time,
       key,
-      lane,
-      element,
+      keyConfig,
+      element: null,
       hit: false,
       missed: false
     };
@@ -337,8 +331,38 @@ function buildNotes() {
 }
 
 function clearNotes() {
-  notes.forEach((note) => note.element.remove());
+  notes.forEach((note) => note.element?.remove());
   notes = [];
+}
+
+function removeNoteElement(note, delay = 0) {
+  if (!note.element) {
+    return;
+  }
+
+  const element = note.element;
+  note.element = null;
+  window.setTimeout(() => element.remove(), delay);
+}
+
+function spawnNoteElement(note, mode) {
+  if (note.element) {
+    return;
+  }
+
+  const lane = [...document.querySelectorAll(".lane")].find((item) => item.dataset.key === note.key);
+
+  if (!lane) {
+    return;
+  }
+
+  const element = document.createElement("div");
+  element.className = "note";
+  element.dataset.key = note.keyConfig.label;
+  element.dataset.note = note.keyConfig.note;
+  element.textContent = mode.pianoInput ? note.keyConfig.note : note.keyConfig.label;
+  lane.appendChild(element);
+  note.element = element;
 }
 
 function resetGame() {
@@ -377,62 +401,61 @@ async function startGame() {
   animationId = requestAnimationFrame(update);
 }
 
-function getMonoSamples(audioBuffer) {
-  const length = audioBuffer.length;
+function getAnalysisAudioData(audioBuffer) {
+  const sampleStep = audioBuffer.sampleRate > 32000 ? 2 : 1;
+  const length = Math.floor(audioBuffer.length / sampleStep);
   const mono = new Float32Array(length);
 
   for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
     const data = audioBuffer.getChannelData(channel);
 
     for (let index = 0; index < length; index += 1) {
-      mono[index] += data[index] / audioBuffer.numberOfChannels;
+      mono[index] += data[index * sampleStep] / audioBuffer.numberOfChannels;
     }
   }
 
-  return mono;
+  return {
+    samples: mono,
+    sampleRate: audioBuffer.sampleRate / sampleStep
+  };
 }
 
 function getRms(samples, start, size) {
   let sum = 0;
 
-  for (let index = 0; index < size; index += 1) {
+  for (let index = 0; index < size; index += 4) {
     const sample = samples[start + index] || 0;
     sum += sample * sample;
   }
 
-  return Math.sqrt(sum / size);
+  return Math.sqrt(sum / Math.ceil(size / 4));
 }
 
 function estimatePitch(samples, start, size, sampleRate) {
-  const minFrequency = 55;
-  const maxFrequency = 1400;
-  const minLag = Math.floor(sampleRate / maxFrequency);
-  const maxLag = Math.floor(sampleRate / minFrequency);
-  let bestLag = 0;
-  let bestCorrelation = 0;
+  let crossings = 0;
+  let previous = samples[start] || 0;
+  let peak = 0;
 
-  for (let lag = minLag; lag <= maxLag; lag += 2) {
-    let correlation = 0;
-    let energyA = 0;
-    let energyB = 0;
-
-    for (let index = 0; index < size - lag; index += 3) {
-      const a = samples[start + index] || 0;
-      const b = samples[start + index + lag] || 0;
-      correlation += a * b;
-      energyA += a * a;
-      energyB += b * b;
-    }
-
-    const normalized = correlation / Math.sqrt((energyA || 1) * (energyB || 1));
-
-    if (normalized > bestCorrelation) {
-      bestCorrelation = normalized;
-      bestLag = lag;
-    }
+  for (let index = 0; index < size; index += 4) {
+    peak = Math.max(peak, Math.abs(samples[start + index] || 0));
   }
 
-  return bestCorrelation > 0.34 ? sampleRate / bestLag : 0;
+  const gate = Math.max(peak * 0.18, 0.006);
+
+  for (let index = 4; index < size; index += 4) {
+    const current = samples[start + index] || 0;
+
+    if (Math.abs(previous) > gate && Math.abs(current) > gate && previous <= 0 && current > 0) {
+      crossings += 1;
+    }
+
+    previous = current;
+  }
+
+  const duration = size / sampleRate;
+  const frequency = crossings / duration;
+
+  return frequency >= 55 && frequency <= 1400 ? frequency : 0;
 }
 
 function normalizeToPianoRange(frequency) {
@@ -475,12 +498,17 @@ function getAnalysisOptions() {
   };
 }
 
-function buildGeneratedPianoChart(audioBuffer) {
-  const samples = getMonoSamples(audioBuffer);
-  const sampleRate = audioBuffer.sampleRate;
+function waitForBrowserFrame() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function buildGeneratedPianoChart(audioBuffer) {
+  const { samples, sampleRate } = getAnalysisAudioData(audioBuffer);
   const { minGap, limit } = getAnalysisOptions();
-  const hopSize = Math.floor(sampleRate * 0.035);
-  const frameSize = Math.floor(sampleRate * 0.06);
+  const hopSize = Math.floor(sampleRate * 0.045);
+  const frameSize = Math.floor(sampleRate * 0.055);
   const energies = [];
 
   for (let start = 0; start + frameSize < samples.length; start += hopSize) {
@@ -492,10 +520,20 @@ function buildGeneratedPianoChart(audioBuffer) {
       rms,
       flux: 0
     });
+
+    if (energies.length % 700 === 0) {
+      setAnalysisStatus(`분석 중... ${Math.round(start / samples.length * 45)}%`);
+      await waitForBrowserFrame();
+    }
   }
 
   for (let index = 1; index < energies.length; index += 1) {
     energies[index].flux = Math.max(0, energies[index].rms - energies[index - 1].rms);
+
+    if (index % 1200 === 0) {
+      setAnalysisStatus(`분석 중... ${45 + Math.round(index / energies.length * 15)}%`);
+      await waitForBrowserFrame();
+    }
   }
 
   const averageEnergy = energies.reduce((sum, frame) => sum + frame.rms, 0) / (energies.length || 1);
@@ -518,7 +556,7 @@ function buildGeneratedPianoChart(audioBuffer) {
       continue;
     }
 
-    const pitch = estimatePitch(samples, current.start, Math.min(frameSize * 2, samples.length - current.start), sampleRate);
+    const pitch = estimatePitch(samples, current.start, Math.min(frameSize, samples.length - current.start), sampleRate);
     const energyRank = Math.floor((current.rms + current.flux) / maxEnergy * pianoKeys.length);
     const key = mapFrequencyToPianoKey(pitch, chart.length, energyRank);
     chart.push([Math.max(450, Math.round(current.time)), key]);
@@ -526,6 +564,11 @@ function buildGeneratedPianoChart(audioBuffer) {
 
     if (chart.length >= limit) {
       break;
+    }
+
+    if (index % 500 === 0) {
+      setAnalysisStatus(`분석 중... ${60 + Math.round(index / energies.length * 35)}%`);
+      await waitForBrowserFrame();
     }
   }
 
@@ -554,7 +597,7 @@ async function analyzeUploadedSong(file) {
     const arrayBuffer = await file.arrayBuffer();
     const context = getAudioContext();
     const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
-    uploadedPianoChart = buildGeneratedPianoChart(audioBuffer);
+    uploadedPianoChart = await buildGeneratedPianoChart(audioBuffer);
     uploadedSongName = file.name;
 
     if (uploadedSongUrl) {
@@ -591,9 +634,18 @@ function update(now) {
   const stageHeight = stage.clientHeight;
   const hitY = stageHeight - hitLineOffset;
   const difficulty = activeDifficulty || getDifficulty();
+  const mode = getActiveMode();
 
   notes.forEach((note) => {
-    if (note.hit) {
+    if (note.hit || note.missed) {
+      return;
+    }
+
+    if (!note.element && note.time - elapsed <= difficulty.noteTravelMs + noteSpawnAheadMs) {
+      spawnNoteElement(note, mode);
+    }
+
+    if (!note.element) {
       return;
     }
 
@@ -609,7 +661,7 @@ function update(now) {
       updateScore(0);
       setJudgement("MISS");
       playMissSound();
-      window.setTimeout(() => note.element.remove(), 160);
+      removeNoteElement(note, 160);
     }
   });
 
@@ -662,10 +714,19 @@ function hitKey(key) {
 
   const elapsed = performance.now() - startTime;
   const difficulty = activeDifficulty || getDifficulty();
-  const target = notes
-    .filter((note) => note.key === key && !note.hit && !note.missed)
-    .map((note) => ({ note, diff: Math.abs(elapsed - note.time) }))
-    .sort((a, b) => a.diff - b.diff)[0];
+  let target = null;
+
+  notes.forEach((note) => {
+    if (note.key !== key || note.hit || note.missed) {
+      return;
+    }
+
+    const diff = Math.abs(elapsed - note.time);
+
+    if (!target || diff < target.diff) {
+      target = { note, diff };
+    }
+  });
 
   if (!target || target.diff > difficulty.missWindow) {
     combo = 0;
@@ -682,8 +743,11 @@ function hitKey(key) {
   }
 
   target.note.hit = true;
-  target.note.element.classList.add("hit");
-  window.setTimeout(() => target.note.element.remove(), 120);
+
+  if (target.note.element) {
+    target.note.element.classList.add("hit");
+    removeNoteElement(target.note, 120);
+  }
 
   if (target.diff <= difficulty.perfectWindow) {
     combo += 1;
