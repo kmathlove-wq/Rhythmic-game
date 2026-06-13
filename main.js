@@ -541,7 +541,7 @@ async function buildGeneratedPianoChart(audioBuffer) {
   const maxEnergy = energies.reduce((max, frame) => Math.max(max, frame.rms + frame.flux), 0) || 1;
   const energyThreshold = Math.max(averageEnergy * 0.78, 0.006);
   const fluxThreshold = Math.max(averageFlux * 1.28, 0.0018);
-  const chart = [];
+  const candidates = [];
   let lastTime = -Infinity;
 
   for (let index = 1; index < energies.length - 1; index += 1) {
@@ -558,19 +558,21 @@ async function buildGeneratedPianoChart(audioBuffer) {
 
     const pitch = estimatePitch(samples, current.start, Math.min(frameSize, samples.length - current.start), sampleRate);
     const energyRank = Math.floor((current.rms + current.flux) / maxEnergy * pianoKeys.length);
-    const key = mapFrequencyToPianoKey(pitch, chart.length, energyRank);
-    chart.push([Math.max(450, Math.round(current.time)), key]);
+    const key = mapFrequencyToPianoKey(pitch, candidates.length, energyRank);
+    candidates.push({
+      time: Math.max(450, Math.round(current.time)),
+      key,
+      score: current.rms + current.flux * 2
+    });
     lastTime = current.time;
-
-    if (chart.length >= limit) {
-      break;
-    }
 
     if (index % 500 === 0) {
       setAnalysisStatus(`분석 중... ${60 + Math.round(index / energies.length * 35)}%`);
       await waitForBrowserFrame();
     }
   }
+
+  const chart = selectChartAcrossSong(candidates, limit, audioBuffer.duration * 1000);
 
   if (chart.length >= Math.min(36, Math.max(12, Math.floor(audioBuffer.duration * 1.2)))) {
     return chart;
@@ -583,6 +585,41 @@ async function buildGeneratedPianoChart(audioBuffer) {
     Math.round(700 + index * fallbackStep),
     pianoKeys[index % pianoKeys.length].key
   ]);
+}
+
+function selectChartAcrossSong(candidates, limit, durationMs) {
+  if (candidates.length <= limit) {
+    return candidates.map((candidate) => [candidate.time, candidate.key]);
+  }
+
+  const bucketCount = Math.min(limit, Math.max(1, Math.ceil(durationMs / 950)));
+  const buckets = Array.from({ length: bucketCount }, () => []);
+
+  candidates.forEach((candidate) => {
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor(candidate.time / durationMs * bucketCount));
+    buckets[bucketIndex].push(candidate);
+  });
+
+  const selected = [];
+  const perBucketBase = Math.max(1, Math.floor(limit / bucketCount));
+  let spare = limit - bucketCount * perBucketBase;
+
+  buckets.forEach((bucket) => {
+    const takeCount = perBucketBase + (spare > 0 ? 1 : 0);
+
+    if (spare > 0) {
+      spare -= 1;
+    }
+
+    bucket
+      .sort((a, b) => b.score - a.score)
+      .slice(0, takeCount)
+      .forEach((candidate) => selected.push(candidate));
+  });
+
+  return selected
+    .sort((a, b) => a.time - b.time)
+    .map((candidate) => [candidate.time, candidate.key]);
 }
 
 async function analyzeUploadedSong(file) {
